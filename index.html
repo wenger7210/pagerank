@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>실시간 우리들의 갤러리 & 소시오메트리</title>
+    <style>
+        body { font-family: 'Malgun Gothic', sans-serif; background-color: #f4f7f6; margin: 0; padding: 20px; }
+        .container { max-width: 900px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        h1, h2 { color: #333; text-align: center; }
+        .hidden { display: none; }
+        
+        /* 로그인 */
+        #login-section { text-align: center; padding: 50px 0; }
+        input[type="text"] { padding: 10px; width: 200px; border: 1px solid #ccc; border-radius: 5px; font-size: 16px; margin-right: 5px; }
+        button { padding: 10px 15px; border: none; background-color: #4CAF50; color: white; border-radius: 5px; cursor: pointer; font-size: 16px; transition: 0.3s; }
+        button:hover { background-color: #45a049; }
+        
+        /* 업로드 영역 */
+        .upload-area { text-align: center; margin-bottom: 30px; padding: 20px; background: #eef2f3; border-radius: 8px; }
+        .upload-area input { width: 60%; }
+        
+        /* 갤러리 */
+        .gallery { display: flex; flex-wrap: wrap; gap: 20px; justify-content: center; margin-bottom: 40px; }
+        .card { background: white; border: 1px solid #ddd; border-radius: 10px; padding: 15px; width: 200px; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        .card img { width: 100%; height: 150px; object-fit: cover; border-radius: 5px; background-color: #eee; }
+        .card h3 { margin: 10px 0 5px 0; font-size: 18px; }
+        .like-btn { background-color: #ff4757; width: 100%; margin-top: 10px; }
+        .like-btn:hover { background-color: #ff6b81; }
+        
+        /* 행렬 데이터 표 */
+        #matrix-section { margin-top: 40px; overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; text-align: center; margin-top: 10px; font-size: 14px; }
+        th, td { border: 1px solid #ddd; padding: 10px; }
+        th { background-color: #f1f2f6; }
+        .highlight { background-color: #ffeaa7; font-weight: bold; color: #ff4757; }
+        .self-cell { background-color: #eee; color: #999; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div id="login-section">
+        <h1>👋 실시간 갤러리 입장</h1>
+        <p>닉네임을 입력하고 친구들과 만나요!</p>
+        <input type="text" id="nickname-input" placeholder="닉네임 입력">
+        <button id="login-btn">입장하기</button>
+    </div>
+
+    <div id="app-section" class="hidden">
+        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 20px;">
+            <h1 id="welcome-msg" style="margin: 0; font-size: 24px;"></h1>
+            <button id="logout-btn" style="background-color: #747d8c;">로그아웃</button>
+        </div>
+        <hr style="border: 0; height: 1px; background: #ddd; margin: 20px 0;">
+
+        <div class="upload-area">
+            <h3>🖼️ 내 그림 등록하기</h3>
+            <p style="font-size: 12px; color: #666; margin-top: -5px;">인터넷 이미지 주소(URL)를 복사해서 넣어주세요.</p>
+            <input type="text" id="image-url" placeholder="https://example.com/image.jpg">
+            <button id="upload-btn">등록</button>
+        </div>
+
+        <h2>🎨 친구들의 작품 갤러리</h2>
+        <div class="gallery" id="gallery-container"></div>
+
+        <div id="matrix-section">
+            <h2>📊 실시간 좋아요 상호작용 행렬 (Sociomatrix)</h2>
+            <div id="matrix-container"></div>
+        </div>
+    </div>
+</div>
+
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+    import { getFirestore, doc, setDoc, getDoc, onSnapshot, updateDoc, arrayUnion, arrayRemove, collection } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+    // 🔥 [필수 수정을 요함] 본인의 Firebase 프로젝트 설정 값으로 변경하세요!
+    const firebaseConfig = {
+  apiKey: "AIzaSyCx71UTmCFE5D2imm3Nh4e9WqR9JjrF2ig",
+
+  authDomain: "pagerank2-c961c.firebaseapp.com",
+
+  projectId: "pagerank2-c961c",
+
+  storageBucket: "pagerank2-c961c.firebasestorage.app",
+
+  messagingSenderId: "701346918898",
+
+  appId: "1:701346918898:web:c1c0800134349b7f9afb6b"
+
+    };
+
+    // Firebase 초기화
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    let currentUser = null;
+    let localAppData = {}; // 실시간으로 DB와 동기화될 데이터 저장소
+
+    // DOM 요소 정의
+    const loginSection = document.getElementById('login-section');
+    const appSection = document.getElementById('app-section');
+    const nicknameInput = document.getElementById('nickname-input');
+    const welcomeMsg = document.getElementById('welcome-msg');
+    const imageUrlInput = document.getElementById('image-url');
+
+    // [기능 1] 로그인 및 유저 생성
+    async function login() {
+        const name = nicknameInput.value.trim();
+        if (!name) return alert("닉네임을 입력해주세요!");
+        
+        currentUser = name;
+        const userRef = doc(db, "students", currentUser);
+        const userSnap = await getDoc(userRef);
+
+        // 만약 처음 접속하는 닉네임이라면 DB에 문서 기본값 생성
+        if (!userSnap.exists()) {
+            await setDoc(userRef, {
+                nickname: currentUser,
+                image: "",
+                likes: [] // 나를 좋아해 준 사람들의 리스트
+            });
+        }
+
+        loginSection.classList.add('hidden');
+        appSection.classList.remove('hidden');
+        welcomeMsg.innerText = `🙋‍♂️ 접속자: ${currentUser}`;
+
+        // 🌟 실시간 리스너 구동 (데이터 변경 시 새로고침 없이 화면 자동 갱신)
+        startRealtimeListener();
+    }
+
+    // [기능 2] 실시간 데이터 동기화 리스너
+    function startRealtimeListener() {
+        onSnapshot(collection(db, "students"), (querySnapshot) => {
+            localAppData = {};
+            querySnapshot.forEach((doc) => {
+                localAppData[doc.id] = doc.data();
+            });
+            // 데이터가 바뀔 때마다 화면 UI(갤러리, 행렬)를 다시 그립니다.
+            updateUI();
+        });
+    }
+
+    // [기능 3] 이미지 업로드 (URL 업데이트)
+    async function uploadImage() {
+        const url = imageUrlInput.value.trim();
+        if (!url) return alert("이미지 URL을 입력해주세요!");
+
+        const userRef = doc(db, "students", currentUser);
+        await updateDoc(userRef, { image: url });
+        
+        alert("그림이 등록되었습니다!");
+        imageUrlInput.value = "";
+    }
+
+    // [기능 4] 좋아요 토글 토글 (상호작용 반영)
+    async function toggleLike(targetUser) {
+        if (targetUser === currentUser) return alert("자신의 작품에는 좋아요를 누를 수 없습니다!");
+
+        const targetRef = doc(db, "students", targetUser);
+        const targetData = localAppData[targetUser];
+
+        if (targetData.likes.includes(currentUser)) {
+            // 이미 좋아요를 눌렀다면 -> 취소 (배열에서 제거)
+            await updateDoc(targetRef, { likes: arrayRemove(currentUser) });
+        } else {
+            // 안 눌렀다면 -> 추가 (배열에 삽입)
+            await updateDoc(targetRef, { likes: arrayUnion(currentUser) });
+        }
+    }
+
+    // [기능 5] 로그아웃
+    function logout() {
+        currentUser = null;
+        nicknameInput.value = "";
+        loginSection.classList.remove('hidden');
+        appSection.classList.add('hidden');
+    }
+
+    // UI 렌더링 총괄
+    function updateUI() {
+        renderGallery();
+        renderMatrix();
+    }
+
+    // 갤러리 화면 그리기
+    function renderGallery() {
+        const container = document.getElementById('gallery-container');
+        container.innerHTML = "";
+
+        for (const [user, data] of Object.entries(localAppData)) {
+            if (!data.image) continue; // 등록된 그림이 없으면 패스
+
+            const likedByMe = data.likes && data.likes.includes(currentUser);
+            const likeCount = data.likes ? data.likes.length : 0;
+            const likeText = likedByMe ? `❤️ 취소 (${likeCount})` : `🤍 좋아요 (${likeCount})`;
+
+            const card = document.createElement('div');
+            card.className = 'card';
+            card.innerHTML = `
+                <img src="${data.image}" alt="${user}의 그림" onerror="this.src='https://via.placeholder.com/200?text=No+Image'">
+                <h3>${user}</h3>
+                <button class="like-btn" id="btn-${user}">${likeText}</button>
+            `;
+            container.appendChild(card);
+
+            // 동적 이벤트 리스너 바인딩
+            document.getElementById(`btn-${user}`).addEventListener('click', () => toggleLike(user));
+        }
+    }
+
+    // 소시오메트리 행렬(Matrix) 시각화 데이터 계산 및 표 그리기
+    function renderMatrix() {
+        const container = document.getElementById('matrix-container');
+        const users = Object.keys(localAppData).sort(); // 가나다순 정렬
+        
+        if (users.length === 0) {
+            container.innerHTML = "<p style='text-align:center; color:#999;'>참여 중인 학생이 없습니다.</p>";
+            return;
+        }
+
+        let tableHTML = "<table><tr><th>보낸 사람 (Row) \\ 받은 사람 (Col)</th>";
+        
+        // 상단 열(Column) 제목 생성: 받은 사람 이름들
+        users.forEach(u => tableHTML += `<th>${u}</th>`);
+        tableHTML += "<th>내가 준 총 하트</th></tr>";
+
+        // 각 행(Row) 데이터 생성: 보낸 사람 기준
+        users.forEach(sender => {
+            tableHTML += `<tr><th>${sender}</th>`;
+            let giveCount = 0; // 보낸 사람이 누른 총 좋아요 수
+
+            users.forEach(receiver => {
+                if (sender === receiver) {
+                    tableHTML += `<td class="self-cell">-</td>`; // 자기 자신 칸 처리
+                } else {
+                    const likesArray = localAppData[receiver].likes || [];
+                    const didLike = likesArray.includes(sender);
+                    if (didLike) giveCount++;
+                    
+                    tableHTML += `<td class="${didLike ? 'highlight' : ''}">${didLike ? '1' : '0'}</td>`;
+                }
+            });
+            tableHTML += `<td><strong>${giveCount}</strong></td></tr>`;
+        });
+
+        // 맨 아래 행: 받은 총 하트 수 합계 계산
+        tableHTML += "<tr><th>받은 총 하트</th>";
+        users.forEach(receiver => {
+            const receiverLikes = localAppData[receiver].likes || [];
+            tableHTML += `<td><strong>${receiverLikes.length}</strong></td>`;
+        });
+        tableHTML += "<td class='self-cell'></td></tr></table>";
+
+        container.innerHTML = tableHTML;
+    }
+
+    // 버튼 이벤트 연결
+    document.getElementById('login-btn').addEventListener('click', login);
+    document.getElementById('upload-btn').addEventListener('click', uploadImage);
+    document.getElementById('logout-btn').addEventListener('click', logout);
+    nicknameInput.addEventListener('keypress', (e) => { if(e.key === 'Enter') login(); });
+</script>
+
+</body>
+</html>
