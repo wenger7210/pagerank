@@ -47,7 +47,7 @@
 <div class="container">
     <div id="login-section">
         <h1>👋 실시간 다중 갤러리</h1>
-        <p>닉네임을 입력하고 입장하세요. 좋아요를 여러 번 누를 수 있습니다!</p>
+        <p>닉네임을 입력하고 입장하세요. 한 친구에게 최대 5번까지 좋아요를 보낼 수 있습니다!</p>
         <input type="text" id="nickname-input" placeholder="닉네임 입력">
         <button id="login-btn">입장하기</button>
     </div>
@@ -67,7 +67,7 @@
             <button id="reset-all-btn" style="background-color: #d63031; font-size: 11px; padding: 5px 10px; margin-left: 15px;">⚠️ 전체 초기화</button>
         </div>
 
-        <h2>🎨 친구들의 작품 갤러리</h2>
+        <h2>🎨 친구들의 작품 갤러리 (개인별 최대 5개 제한)</h2>
         <div class="gallery" id="gallery-container"></div>
 
         <div id="matrix-section">
@@ -116,7 +116,7 @@
             await setDoc(userRef, {
                 nickname: currentUser,
                 image: "",
-                likes: {} // 맵(Map) 형태로 변경: { "보낸사람닉네임": 누른횟수 }
+                likes: {} 
             });
         }
 
@@ -154,28 +154,35 @@
         await updateDoc(userRef, { image: "" });
     }
 
-    // [기능 변경] 좋아요 증가 (+1)
+    // [기능 추가] 좋아요 증가 (+1, 인당 최대 5개 제한 설정)
     async function addLike(targetUser) {
         if (targetUser === currentUser) return alert("자신의 작품에는 좋아요를 누를 수 없습니다!");
 
+        // 상대방 데이터에서 내가 이미 누른 하트 수 계산
+        const targetData = localAppData[targetUser];
+        const myCount = (targetData.likes && targetData.likes[currentUser]) || 0;
+
+        // 🛑 5번 제한 체크
+        if (myCount >= 5) {
+            alert(`🔔 ${targetUser}님에게는 이미 최대 5번의 하트를 모두 보냈습니다!`);
+            return;
+        }
+
         const targetRef = doc(db, "students", targetUser);
-        
-        // Firestore의 increment 기능을 사용하여 안전하게 1 증가
         await updateDoc(targetRef, {
             [`likes.${currentUser}`]: increment(1)
         });
     }
 
-    // [기능 변경] 좋아요 취소 (-1, 최소값 0 제한)
+    // 좋아요 취소 (-1, 최소값 0 제한)
     async function removeLike(targetUser) {
         if (targetUser === currentUser) return;
 
         const targetData = localAppData[targetUser];
         const currentLikes = (targetData.likes && targetData.likes[currentUser]) || 0;
 
-        // 0보다 작아질 수 없도록 제한
         if (currentLikes <= 0) {
-            alert("받은 하트가 이미 0개입니다!");
+            alert("보낸 하트가 이미 0개입니다!");
             return;
         }
 
@@ -210,7 +217,7 @@
         renderMatrix();
     }
 
-    // 갤러리 렌더링 (버튼 분리형)
+    // 갤러리 렌더링
     function renderGallery() {
         const container = document.getElementById('gallery-container');
         container.innerHTML = "";
@@ -219,18 +226,19 @@
             if (!data.image) continue;
 
             const likesMap = data.likes || {};
-            // 총 받은 좋아요 수 계산 (Map 안의 모든 숫자 합산)
             const totalLikes = Object.values(likesMap).reduce((a, b) => a + b, 0);
-            // 내가 이 유저에게 누른 좋아요 수
             const myCount = likesMap[currentUser] || 0;
 
             const card = document.createElement('div');
             card.className = 'card';
+            // 내가 누른 횟수가 5개일 때 시각적으로 다 찼음을 안내
+            const gaugeText = myCount >= 5 ? "🔥 풀 하트 완료!" : `(${myCount} / 5개 보냄)`;
+
             card.innerHTML = `
                 <img src="${data.image}" alt="${user}의 그림" onerror="this.src='https://via.placeholder.com/200?text=No+Image'">
                 <h3>${user}</h3>
                 <p style="font-size:13px; color:#222; margin:5px 0;">❤️ 총 하트: <strong>${totalLikes}</strong>개</p>
-                <p style="font-size:11px; color:#666; margin:0 0 10px 0;">(내가 보낸 하트: ${myCount}개)</p>
+                <p style="font-size:11px; color:${myCount >= 5 ? '#ff4757' : '#666'}; margin:0 0 10px 0; font-weight:${myCount >= 5 ? 'bold' : 'normal'};">${gaugeText}</p>
                 <div class="btn-group">
                     <button class="like-btn" id="like-${user}">❤️ 좋아요</button>
                     <button class="unlike-btn" id="unlike-${user}">💔 취소</button>
@@ -238,13 +246,12 @@
             `;
             container.appendChild(card);
 
-            // 이벤트 바인딩
             document.getElementById(`like-${user}`).addEventListener('click', () => addLike(user));
             document.getElementById(`unlike-${user}`).addEventListener('click', () => removeLike(user));
         }
     }
 
-    // 소시오메트리 행렬 렌더링 (숫자 표현형)
+    // 소시오메트리 행렬 렌더링
     function renderMatrix() {
         const container = document.getElementById('matrix-container');
         const users = Object.keys(localAppData).sort();
@@ -267,7 +274,7 @@
                     tableHTML += `<td class="self-cell">-</td>`;
                 } else {
                     const likesMap = localAppData[receiver].likes || {};
-                    const count = likesMap[sender] || 0; // 보낸 사람이 받은 사람에게 누른 횟수
+                    const count = likesMap[sender] || 0;
                     giveCount += count;
                     
                     tableHTML += `<td class="${count > 0 ? 'highlight' : ''}">${count}</td>`;
@@ -287,7 +294,6 @@
         container.innerHTML = tableHTML;
     }
 
-    // 버튼 이벤트 리스너 연결
     document.getElementById('login-btn').addEventListener('click', login);
     document.getElementById('upload-btn').addEventListener('click', uploadImage);
     document.getElementById('delete-btn').addEventListener('click', deleteMyImage);
